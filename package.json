@@ -1,0 +1,28 @@
+{
+  "name": "ado-of-light",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Bot e API de consulta do mercado de Final Fantasy XIV via Universalis.",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "format": "prettier --write \"**/*.{ts,json,jsonc,yml,md}\"",
+    "format:check": "prettier --check \"**/*.{ts,json,jsonc,yml,md}\"",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "commands:register": "npm run build && node --env-file-if-exists=.env dist/scripts/register-commands.js",
+    "job:daily": "npm run build && node --env-file-if-exists=.env dist/jobs/run-publish.js"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "prettier": "^3.6.2",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11",
+    "wrangler": "^4.152.0"
+  }
+}
