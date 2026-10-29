@@ -1,4 +1,4 @@
-# Ado of Light
+# Ado of Light 🌟⚔
 
 Bot de publicação diária do mercado de Final Fantasy XIV no data center Primal. Todos os dias, o processo coleta no Universalis as vendas registradas nas últimas 24 horas, monta um ranking de compras e publica no canal Discord configurado. No último dia do mês, também tenta publicar o ranking mensal.
 
