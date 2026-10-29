@@ -113,6 +113,46 @@ export class UniversalisClient {
       return response.items[String(itemId)] ?? {};
     return response as CurrentItemResponse;
   }
+
+  async getCurrentItems(
+    world: string,
+    itemIds: number[],
+  ): Promise<Map<number, CurrentItemResponse>> {
+    const batches = chunk(itemIds, 100);
+    const responses = await mapWithConcurrency(batches, 4, async (ids) => {
+      const query = new URLSearchParams({ listings: "1" });
+      const url = `${this.baseUrl}/${encodeURIComponent(world)}/${ids.join(",")}?${query}`;
+      return fetchJson<
+        CurrentMultiResponse | CurrentItemResponse | CurrentItemResponse[]
+      >(url);
+    });
+    const result = new Map<number, CurrentItemResponse>();
+
+    responses.forEach((response, batchIndex) => {
+      if (Array.isArray(response)) {
+        for (const item of response) {
+          const itemId = (item as CurrentItemResponse & { itemID?: number })
+            .itemID;
+          if (Number.isInteger(itemId)) result.set(itemId!, item);
+        }
+        return;
+      }
+
+      if (isRecord(response) && isRecord(response.items)) {
+        for (const [itemId, item] of Object.entries(response.items)) {
+          if (isRecord(item))
+            result.set(Number(itemId), item as CurrentItemResponse);
+        }
+        return;
+      }
+
+      const requestedId = batches[batchIndex]?.[0];
+      if (requestedId !== undefined)
+        result.set(requestedId, response as CurrentItemResponse);
+    });
+
+    return result;
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -1,124 +1,87 @@
 # Ado of Light
 
-Bot e API leves para consultar o mercado de Final Fantasy XIV no data center Primal. As leituras usam Universalis e XIVAPI, são processadas em memória e descartadas ao terminar. O projeto não usa banco de dados nem grava histórico de preços ou vendas.
+Bot de publicação diária do mercado de Final Fantasy XIV no data center Primal. Todos os dias, o processo coleta no Universalis as vendas registradas nas últimas 24 horas, monta um ranking de compras e publica no canal Discord configurado. No último dia do mês, também tenta publicar o ranking mensal.
 
-## O que está implementado
+O bot não recebe comandos de chat nem faz consultas de preço sob demanda. O Render hospeda um pequeno servidor HTTP que agenda a publicação para 12h no horário de São Paulo. O GitHub Actions faz uma chamada às 11h50 para acordar o serviço gratuito do Render antes da publicação.
 
-- `GET /api/preco?nome=Excalibur`: consulta JSON sob demanda.
-- Comando Discord `/preco nome:<item>`, com autocomplete pela XIVAPI.
-- Validação Ed25519 das interações recebidas do Discord.
-- Publicação diária às 12h de Brasília via GitHub Actions, com intervalo real das últimas 24 horas.
-- Especial mensal executado no último dia do mês, condicionado ao limite verificável do endpoint.
-- Nenhuma tabela de novos anúncios: Universalis não fornece timestamp confiável de criação do anúncio. O `lastReviewTime` atual não deve ser tratado como data de criação.
+## O que é publicado
 
-Os rankings representam as vendas registradas nos dados recebidos pelo Universalis. O serviço é abastecido por uploads comunitários e não garante cobertura de todas as transações do jogo. O especial mensal omite a publicação do ranking se algum item atingir o limite de 99.999 registros; isso detecta truncamento pelo limite da resposta, mas não transforma os dados comunitários em um censo completo das vendas.
+- Ranking diário dos itens com maior volume de unidades vendidas nas últimas 24 horas.
+- Menor preço anunciado atualmente em cada um dos sete mundos de Primal para os itens do ranking, quando a API informa esse dado.
+- Ranking mensal no último dia do mês, desde que a resposta do Universalis não tenha atingido o limite de registros.
 
-## Requisitos e execução local
+As vendas representam os registros recebidos pelo Universalis, que depende de uploads comunitários e não garante cobertura de todas as transações do jogo. O projeto não armazena histórico. Não há tabela de novos anúncios: a API não fornece uma data confiável de criação dos anúncios.
 
-- Node.js 24 LTS ou posterior e npm.
-- Uma aplicação/bot Discord e um Worker no Cloudflare para consultas sob demanda.
-- GitHub Actions para as publicações agendadas.
+## Implantação no Render
+
+1. Envie este projeto para um repositório GitHub.
+2. No Render, escolha **New → Blueprint** e conecte o repositório. O arquivo [`render.yaml`](render.yaml) configura o serviço web gratuito, o comando de build, o servidor e a verificação de saúde.
+3. Nas variáveis de ambiente do serviço Render, configure:
+   - `DISCORD_BOT_TOKEN`: token do bot Discord.
+   - `DISCORD_CHANNEL_ID`: ID do canal onde as publicações devem aparecer.
+   - `RENDER_WAKE_TOKEN`: segredo aleatório usado para autorizar o GitHub Actions a acordar o servidor.
+4. Convide o bot ao servidor e dê ao cargo do bot acesso ao canal, com `View Channel`, `Send Messages` e `Embed Links`. A leitura do histórico (`Read Message History`) também é usada para evitar a duplicação do especial mensal.
+
+O endpoint `GET /health` é usado pelo Render para confirmar que o servidor está pronto. O `POST /wake` exige `Authorization: Bearer <RENDER_WAKE_TOKEN>`; não compartilhe esse segredo.
+
+## Agendamento no GitHub Actions
+
+O workflow [`wake-render.yml`](.github/workflows/wake-render.yml) roda às **11h50 de São Paulo** (`14:50 UTC`) e envia a chamada autenticada ao Render. O serviço agenda o envio para **12h00 de São Paulo**. Se o workflow chegar depois do meio-dia, o endpoint pede uma publicação imediata para não esperar até o dia seguinte.
+
+No repositório GitHub, abra **Settings → Secrets and variables → Actions** e configure:
+
+- Em **Variables**, `RENDER_SERVICE_URL` com a URL base do serviço Render, por exemplo `https://ado-of-light.onrender.com` (sem `/wake`).
+- Em **Secrets**, `RENDER_WAKE_TOKEN` com o mesmo segredo configurado no Render.
+
+O agendamento do GitHub Actions pode atrasar alguns minutos sob carga. Ele roda a partir da branch padrão do repositório. O Render gratuito normalmente suspende o serviço após 15 minutos sem tráfego e demora cerca de um minuto para acordar; a chamada das 11h50 dá margem para iniciar antes do horário de publicação. Instâncias gratuitas podem reiniciar e não oferecem garantia de execução pontual.
+
+## Discord
+
+Como o bot apenas publica mensagens, ele não precisa de URL de interações nem de URL de redirecionamento OAuth2. Para adicioná-lo ao servidor, use o link de instalação com o escopo `bot` e conceda as permissões de canal acima. O escopo `applications.commands` só é necessário se o projeto voltar a oferecer comandos slash.
+
+## Desenvolvimento local
+
+Requisitos: Node.js 24 ou posterior e npm.
 
 ```sh
 npm ci
 cp .env.example .env
 ```
 
-Preencha `.env` com os valores da seção de configuração. O arquivo `.env` é ignorado pelo Git. Não coloque tokens ou chaves em arquivos commitados.
+Preencha no `.env` `DISCORD_BOT_TOKEN`, `DISCORD_CHANNEL_ID` e `RENDER_WAKE_TOKEN`. Para apenas gerar uma prévia sem postar:
 
-```sh
-npm test
-npm run build
+```powershell
+$env:PUBLISH_TO_DISCORD="false"
 npm run job:daily
 ```
 
-`job:daily` consulta as APIs e publica no canal configurado. Use credenciais e canal de teste durante validação. No GitHub, uma execução manual com `publish: false` consulta os dados e mostra uma prévia nos logs sem enviar mensagens. Para testar apenas cálculos, rode `npm test`, que não faz chamadas de mercado.
+Para publicar manualmente no canal configurado, execute `npm run job:daily` sem definir `PUBLISH_TO_DISCORD=false`.
 
-Para testar o Worker localmente, use `npm run dev`. O segredo de validação de interações pode ser definido em `.dev.vars` (arquivo ignorado pelo Git) como `DISCORD_PUBLIC_KEY=...`; o endpoint JSON funciona sem esse segredo.
-
-## Configuração do Discord
-
-1. Crie uma aplicação e um bot no [Discord Developer Portal](https://discord.com/developers/applications).
-2. Anote o **Application ID**, **Bot Token** e **Public Key**. Convide a aplicação ao servidor com os escopos `bot` e `applications.commands` e permissão para enviar mensagens.
-3. Copie `.env.example` para `.env` e defina `DISCORD_BOT_TOKEN`, `DISCORD_CLIENT_ID`, `DISCORD_GUILD_ID` e `DISCORD_CHANNEL_ID`. `DISCORD_PUBLIC_KEY` é usada pelo Worker para validar requisições de interação.
-4. Registre o comando no servidor de teste (guild command atualiza imediatamente):
-
-   ```sh
-   npm run commands:register
-   ```
-
-   Sem `DISCORD_GUILD_ID`, o registro é global e pode demorar para aparecer em todos os servidores.
-
-5. Faça deploy do Worker e defina a URL de interações da aplicação como `https://<worker>.<conta>.workers.dev/interactions` no Developer Portal. A URL da API JSON será `https://<worker>.<conta>.workers.dev/api/preco?nome=Excalibur`.
-
-O Worker responde imediatamente ao comando e conclui a consulta em uma mensagem privada à pessoa que usou `/preco`. A API HTTP retorna `400` para entrada inválida, `404` para item não encontrado, `429` após o limite local temporário e `502` para indisponibilidade das APIs externas. A limitação de consultas por IP/usuário é em memória por isolate; não é uma quota global persistente.
-
-## Cloudflare Workers
-
-O Worker está configurado em [`wrangler.jsonc`](wrangler.jsonc). Faça login e defina o segredo da chave pública do Discord:
+Para iniciar o servidor local:
 
 ```sh
-npx wrangler login
-npx wrangler secret put DISCORD_PUBLIC_KEY
-npm run deploy
+npm run build
+npm start
 ```
 
-Alternativamente, o workflow manual `Deploy da API e interações` faz o deploy quando os secrets `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` e `DISCORD_PUBLIC_KEY` estiverem cadastrados no GitHub. O token Cloudflare precisa de permissão para publicar Workers.
-
-O Worker gratuito atende a esta carga pequena, mas seus limites são rígidos e dependem do plano atual da conta. Se o limite gratuito diário de requisições ou o limite de CPU por invocação for atingido, novas consultas podem falhar. A espera por rede externa não consome CPU, mas o tempo total ainda depende das APIs e do prazo do Discord.
-
-## Publicações pelo GitHub Actions
-
-O workflow [`daily-publish.yml`](.github/workflows/daily-publish.yml) roda diariamente às 12h de `America/Sao_Paulo`. No último dia local do mês, também tenta publicar o ranking mensal. O GitHub Actions pode atrasar ou descartar agendamentos sob alta carga; portanto, 12h é o horário solicitado, não uma garantia de execução exata. O timezone é configurado diretamente no cron.
-
-Cadastre como Actions secrets:
-
-- `DISCORD_BOT_TOKEN`
-- `DISCORD_CHANNEL_ID`
-
-E, opcionalmente, como Actions variables:
-
-- `UNIVERSALIS_BASE_URL` (padrão `https://universalis.app/api/v2`)
-- `XIVAPI_BASE_URL` (padrão `https://v2.xivapi.com/api`)
-
-Execuções manuais do workflow são dry-run por padrão; selecione `publish: true` para publicar. O marcador do mês é incluído na mensagem e o workflow procura mensagens recentes do canal antes de publicar outra edição mensal. Para essa verificação, o bot precisa de `View Channel` e `Read Message History`, além de `Send Messages`. Execuções do workflow são serializadas. Excluir o marcador manualmente remove essa proteção contra reexecução.
-
-O agendamento do Actions funciona apenas na branch padrão. Em repositórios públicos, o GitHub pode desativar workflows agendados após 60 dias sem atividade no repositório. A disponibilidade e eventuais custos/quotas do Actions dependem do tipo de repositório e do plano da conta; confira o consumo nas configurações do GitHub.
-
-## Endpoints do Universalis usados
-
-- `GET /api/v2/marketable`: IDs do catálogo de itens negociáveis.
-- `GET /api/v2/history/Primal/{ids}?entriesWithin=...&entriesToReturn=...`: vendas observadas por item; no máximo 100 IDs por chamada.
-- `GET /api/v2/Primal/{id}`: anúncios atualmente ativos e estatísticas de mercado para a pesquisa de preço.
-- XIVAPI v2 `/api/search` e `/api/sheet/Item/{id}`: autocomplete, busca de item e nomes para exibição.
-
-O cliente usa timeout, tentativas limitadas para erros transitórios, lotes de até 100 itens e quatro chamadas simultâneas ao Universalis, abaixo do limite de oito conexões por IP documentado pelo serviço. Dados de vendas e anúncios existem somente na memória da execução. A lista de IDs vem do endpoint público e não é armazenada pelo projeto.
+O servidor agendará a publicação para o próximo meio-dia de São Paulo. Para acordá-lo manualmente pelo endpoint, envie `POST http://localhost:10000/wake` com o cabeçalho `Authorization: Bearer <RENDER_WAKE_TOKEN>`.
 
 ## Arquitetura
 
 ```text
-GitHub Actions (12h BRT) ──> Universalis ──> agregação em memória ──> Discord
-Discord Interactions ──────> Cloudflare Worker ──> XIVAPI / Universalis
-Consulta HTTP JSON ────────> Cloudflare Worker ──> XIVAPI / Universalis
+GitHub Actions (11h50 BRT) ──POST /wake──> Render
+                                               │ agenda para 12h BRT
+Universalis ──> agregação em memória ──────────┴──> canal Discord
+XIVAPI ───────> nomes dos itens
 ```
 
-O Worker usa Web Crypto para verificar a assinatura Ed25519, responde ao Discord dentro do prazo de três segundos e faz o trabalho de mercado após o deferimento. Não é necessário manter um processo Node.js, gateway Discord ou serviço Render permanentemente ligado. GitHub Actions usa Node.js somente durante as publicações agendadas.
-
-## Limitações conhecidas
-
-- **Novos anúncios em 24h:** indisponível sem snapshots próprios. Anúncios ativos e atualizados não são anúncios recém-criados; a API não oferece um evento confiável de criação.
-- **Vendas:** são vendas efetivas reportadas nos registros retornados, porém a cobertura do Universalis depende dos uploads comunitários.
-- **Ranking mensal:** uma resposta que atinja 99.999 registros é tratada como truncada e não gera ranking. Fora isso, o endpoint não fornece prova de que a cobertura de mercado seja completa; a mensagem descreve os registros da API, não todas as transações do jogo.
-- **Preço agregado:** o menor anúncio é oferta atual reportada; preço médio e compras recentes são dados de vendas concluídas, não ofertas atuais.
-- **Render Free:** não é usado. O cold start de cerca de um minuto não atende ao prazo de três segundos das interações do Discord.
-- **Custos:** a aplicação depende de APIs públicas gratuitas e dos limites dos planos gratuitos do GitHub/Cloudflare. Nenhum serviço pago é habilitado pelo código; serviços podem rejeitar chamadas quando quotas gratuitas forem excedidas.
+O serviço não precisa de banco de dados. As respostas do mercado existem somente na memória durante a execução da publicação.
 
 ## Estrutura
 
-- `src/core/`: tipos, janelas temporais, agregação e formatação.
-- `src/services/`: chamadas HTTP, Universalis, XIVAPI e preços.
-- `src/worker/`: API HTTP e endpoint das interações Discord.
-- `src/jobs/`: publicação diária e mensal via execução temporária do Node.
-- `scripts/`: registro do comando slash.
+- `src/core/`: janelas temporais, tipos, ranking e formatação.
+- `src/services/`: chamadas HTTP ao Universalis e XIVAPI.
+- `src/jobs/`: coleta e publicação diária e mensal; agendamento pelo servidor.
+- `src/server.ts`: endpoints de saúde e de ativação autenticada.
+- `.github/workflows/`: chamada diária para acordar o Render.
 - `tests/`: testes unitários sem chamadas reais às APIs.
-- `.github/workflows/`: publicação agendada e deploy manual do Worker.

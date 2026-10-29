@@ -6,6 +6,7 @@ import {
   getLocalMonthWindow,
   isLastDayOfMonth,
   isTruncatedByLimit,
+  PRIMAL_WORLDS,
   rankSalesByUnits,
 } from "../core/market.js";
 import type { Environment } from "../core/types.js";
@@ -23,7 +24,7 @@ export async function runScheduledPublication(
 ): Promise<void> {
   if (publish && (!env.DISCORD_BOT_TOKEN || !env.DISCORD_CHANNEL_ID))
     throw new Error(
-      "Configure DISCORD_BOT_TOKEN e DISCORD_CHANNEL_ID nos secrets do GitHub Actions.",
+      "Configure DISCORD_BOT_TOKEN e DISCORD_CHANNEL_ID no ambiente.",
     );
   const market = new UniversalisClient(env.UNIVERSALIS_BASE_URL);
   const xivapi = new XIVApiClient(env.XIVAPI_BASE_URL);
@@ -41,32 +42,47 @@ export async function runScheduledPublication(
     })),
   );
   const dailyTop = dailyRanks.slice(0, 10);
-  const [dailyNames, currentRows] = await Promise.all([
+  const [dailyNames, worldPriceRows] = await Promise.all([
     xivapi.getItemNames(dailyTop.map((row) => row.itemId)),
-    mapWithConcurrency(dailyTop, 4, async (row) => {
+    mapWithConcurrency([...PRIMAL_WORLDS], 4, async (world) => {
       try {
-        const current = await market.getCurrentItem(row.itemId);
+        const currentItems = await market.getCurrentItems(
+          world,
+          dailyTop.map((row) => row.itemId),
+        );
         return [
-          row.itemId,
-          current.minPrice ??
-            current.listings?.reduce<number | null>(
-              (min, listing) =>
-                min === null || listing.pricePerUnit < min
-                  ? listing.pricePerUnit
-                  : min,
-              null,
-            ) ??
-            null,
+          world,
+          new Map(
+            dailyTop.map((row) => {
+              const current = currentItems.get(row.itemId);
+              const minPrice =
+                current?.minPrice ??
+                current?.listings?.reduce<number | null>(
+                  (min, listing) =>
+                    min === null || listing.pricePerUnit < min
+                      ? listing.pricePerUnit
+                      : min,
+                  null,
+                ) ??
+                null;
+              return [row.itemId, minPrice] as const;
+            }),
+          ),
         ] as const;
       } catch {
-        return [row.itemId, null] as const;
+        return [
+          world,
+          new Map<number, number | null>(
+            dailyTop.map((row) => [row.itemId, null]),
+          ),
+        ] as const;
       }
     }),
   ]);
   const dailyMessage = formatDailyRanking(
     dailyRanks,
     dailyNames,
-    new Map(currentRows),
+    new Map(worldPriceRows),
     dailyWindow,
   );
   if (publish) await postLongMessage(env, dailyMessage);

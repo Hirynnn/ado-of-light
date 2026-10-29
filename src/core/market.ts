@@ -1,6 +1,15 @@
 import type { ItemSalesRank, SaleEntry } from "./types.js";
 
 export const PRIMAL_DC = "Primal";
+export const PRIMAL_WORLDS = [
+  "Behemoth",
+  "Excalibur",
+  "Famfrit",
+  "Hyperion",
+  "Lamia",
+  "Leviathan",
+  "Ultros",
+] as const;
 export const DAY_SECONDS = 24 * 60 * 60;
 export const MONTHLY_ENTRY_LIMIT = 99_999;
 

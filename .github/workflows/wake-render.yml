@@ -1,0 +1,44 @@
+name: Acordar Render para publicação do meio-dia
+
+on:
+  schedule:
+    # 11:50 em São Paulo (UTC-03:00). O processo do Render publica ao meio-dia.
+    - cron: "50 14 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ado-of-light-render-wake
+  cancel-in-progress: false
+
+jobs:
+  wake:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Acordar o serviço do Render
+        env:
+          RENDER_SERVICE_URL: ${{ vars.RENDER_SERVICE_URL }}
+          RENDER_WAKE_TOKEN: ${{ secrets.RENDER_WAKE_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$RENDER_SERVICE_URL" || -z "$RENDER_WAKE_TOKEN" ]]; then
+            echo "Configure a variável RENDER_SERVICE_URL e o secret RENDER_WAKE_TOKEN no GitHub."
+            exit 1
+          fi
+
+          url="${RENDER_SERVICE_URL%/}/wake"
+          for attempt in $(seq 1 10); do
+            status=$(curl --silent --show-error --output /tmp/render-wake-response \
+              --write-out "%{http_code}" --connect-timeout 15 --max-time 75 \
+              --request POST --header "Authorization: Bearer ${RENDER_WAKE_TOKEN}" \
+              "$url" || true)
+            if [[ "$status" == "202" ]]; then
+              echo "Render acordado; publicação agendada para 12h de São Paulo."
+              cat /tmp/render-wake-response
+              exit 0
+            fi
+            echo "Tentativa ${attempt}/10: resposta HTTP ${status:-sem resposta}."
+            sleep 10
+          done
+          echo "Não foi possível acordar o Render após 10 tentativas."
+          exit 1

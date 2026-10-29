@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: ado-of-light
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: DISCORD_BOT_TOKEN
+        sync: false
+      - key: DISCORD_CHANNEL_ID
+        sync: false
+      - key: RENDER_WAKE_TOKEN
+        sync: false
+      - key: UNIVERSALIS_BASE_URL
+        value: https://universalis.app/api/v2
+      - key: XIVAPI_BASE_URL
+        value: https://v2.xivapi.com/api

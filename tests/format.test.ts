@@ -9,17 +9,18 @@ import type { ItemMarketPrice } from "../src/core/types.js";
 describe("mensagens", () => {
   it("formata ranking vazio e deixa claro quando o menor anúncio falta", () => {
     const window = { start: 1_700_000_000, end: 1_700_086_400 };
-    expect(formatDailyRanking([], new Map(), new Map(), window)).toContain(
+    const noWorldPrices = new Map<string, Map<number, number | null>>();
+    expect(formatDailyRanking([], new Map(), noWorldPrices, window)).toContain(
       "Nenhuma venda registrada",
     );
-    expect(
-      formatDailyRanking(
-        [{ itemId: 1, unitsSold: 4, weightedAveragePrice: 25, salesCount: 2 }],
-        new Map([[1, "Item A"]]),
-        new Map(),
-        window,
-      ),
-    ).toContain("menor anúncio não disponível");
+    const daily = formatDailyRanking(
+      [{ itemId: 1, unitsSold: 4, weightedAveragePrice: 25, salesCount: 2 }],
+      new Map([[1, "Item A"]]),
+      new Map([["Behemoth", new Map([[1, null]])]]),
+      window,
+    );
+    expect(daily).toContain("BHM Behemoth");
+    expect(daily).toContain("— = sem anúncio disponível");
   });
 
   it("diferencia vendas do mês de anúncios e formata preço sem inventar média", () => {

@@ -59,8 +59,6 @@ export interface Environment {
   UNIVERSALIS_BASE_URL?: string;
   XIVAPI_BASE_URL?: string;
   DISCORD_BOT_TOKEN?: string;
-  DISCORD_CLIENT_ID?: string;
-  DISCORD_GUILD_ID?: string;
   DISCORD_CHANNEL_ID?: string;
-  DISCORD_PUBLIC_KEY?: string;
+  RENDER_WAKE_TOKEN?: string;
 }
