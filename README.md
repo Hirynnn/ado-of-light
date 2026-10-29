@@ -1,0 +1,2 @@
+# ado-of-light
+BOT DA ADO NO FINAL FANTASY XIV
