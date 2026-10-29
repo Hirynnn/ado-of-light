@@ -13,8 +13,8 @@
     "test:watch": "vitest",
     "format": "prettier --write \"**/*.{ts,json,jsonc,yml,md}\"",
     "format:check": "prettier --check \"**/*.{ts,json,jsonc,yml,md}\"",
-    "start": "node --env-file-if-exists=.env dist/server.js",
-    "job:daily": "npm run build && node --env-file-if-exists=.env dist/jobs/run-publish.js"
+    "start": "node --env-file-if-exists=.env dist/src/server.js",
+    "job:daily": "npm run build && node --env-file-if-exists=.env dist/src/jobs/run-publish.js"
   },
   "devDependencies": {
     "@types/node": "^24.10.0",
