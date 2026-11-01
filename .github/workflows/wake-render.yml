@@ -2,8 +2,7 @@ name: Publicar mercado no Discord
 
 on:
   schedule:
-    # Duas chamadas diárias: redundância para acordar Render perto do meio-dia.
-    - cron: "45 14 * * *"
+    # O workflow acorda o Render e mantem trafego enquanto a publicacao tenta o Universalis.
     - cron: "55 14 * * *"
   workflow_dispatch:
     inputs:
@@ -17,22 +16,22 @@ on:
           - acordar
 
 concurrency:
-  group: ado-of-light-render-wake
-  cancel-in-progress: false
+  group: ${{ github.event_name == 'schedule' && 'ado-of-light-scheduled-wake' || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   wake:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 85
     steps:
-      - name: Acordar o serviço do Render
+      - name: Acordar o Render e acompanhar a publicacao
         env:
           RENDER_SERVICE_URL: ${{ vars.RENDER_SERVICE_URL }}
           RENDER_WAKE_TOKEN: ${{ secrets.RENDER_WAKE_TOKEN }}
         run: |
           set -euo pipefail
           if [[ -z "$RENDER_SERVICE_URL" || -z "$RENDER_WAKE_TOKEN" ]]; then
-            echo "Configure a variável RENDER_SERVICE_URL e o secret RENDER_WAKE_TOKEN no GitHub."
+            echo "Configure a variavel RENDER_SERVICE_URL e o secret RENDER_WAKE_TOKEN no GitHub."
             exit 1
           fi
 
@@ -40,19 +39,63 @@ jobs:
           if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.acao }}" == "publicar_agora" ]]; then
             endpoint="/publish-now"
           fi
-          url="${RENDER_SERVICE_URL%/}${endpoint}"
+          base_url="${RENDER_SERVICE_URL%/}"
+          url="${base_url}${endpoint}"
+          accepted=false
           for attempt in $(seq 1 10); do
-            status=$(curl --silent --show-error --output /tmp/render-wake-response \
+            http_status=$(curl --silent --show-error --output /tmp/render-wake-response \
               --write-out "%{http_code}" --connect-timeout 15 --max-time 75 \
               --request POST --header "Authorization: Bearer ${RENDER_WAKE_TOKEN}" \
               "$url" || true)
-            if [[ "$status" == "202" ]]; then
-              echo "Render aceitou a solicitação: ${endpoint}."
+            if [[ "$http_status" == "202" ]]; then
+              accepted=true
+              echo "Render aceitou a solicitacao: ${endpoint}."
               cat /tmp/render-wake-response
-              exit 0
+              break
             fi
-            echo "Tentativa ${attempt}/10: resposta HTTP ${status:-sem resposta}."
+            echo "Tentativa ${attempt}/10: resposta HTTP ${http_status:-sem resposta}."
             sleep 10
           done
-          echo "Não foi possível acordar o Render após 10 tentativas."
+          if [[ "$accepted" != "true" ]]; then
+            echo "Nao foi possivel acordar o Render apos 10 tentativas."
+            exit 1
+          fi
+
+          if [[ "$endpoint" == "/wake" ]]; then
+            wake_state=$(jq -r '.status // empty' /tmp/render-wake-response)
+            scheduled_for=$(jq -r '.scheduledFor // empty' /tmp/render-wake-response)
+            if [[ "$wake_state" == "waiting" && -n "$scheduled_for" ]]; then
+              scheduled_epoch=$(date -u -d "$scheduled_for" +%s)
+              now_epoch=$(date -u +%s)
+              if (( scheduled_epoch - now_epoch > 5 * 60 )); then
+                echo "O meio-dia esta a mais de 5 minutos. O agendamento diario do GitHub fara a ativacao perto do horario."
+                exit 0
+              fi
+            fi
+          fi
+
+          status_url="${base_url}/status"
+          for poll in $(seq 1 15); do
+            http_status=$(curl --silent --show-error --output /tmp/render-publish-status \
+              --write-out "%{http_code}" --connect-timeout 15 --max-time 30 \
+              --header "Authorization: Bearer ${RENDER_WAKE_TOKEN}" \
+              "$status_url" || true)
+            if [[ "$http_status" == "200" ]]; then
+              publication_status=$(jq -r '.status // "unknown"' /tmp/render-publish-status)
+              echo "Estado da publicacao: ${publication_status} (${poll}/15)."
+              if [[ "$publication_status" == "succeeded" ]]; then
+                echo "Publicacao concluida."
+                exit 0
+              fi
+              if [[ "$publication_status" == "failed" ]]; then
+                echo "Publicacao falhou; confira os logs do Render."
+                exit 1
+              fi
+            else
+              echo "Status indisponivel (HTTP ${http_status:-sem resposta}); nova consulta em 5 minutos."
+            fi
+            if [[ "$poll" -lt 15 ]]; then sleep 300; fi
+          done
+
+          echo "A publicacao nao terminou dentro da janela de uma hora."
           exit 1

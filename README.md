@@ -2,7 +2,7 @@
 
 Bot de publicação diária do mercado de Final Fantasy XIV no data center Primal. Todos os dias, o processo coleta no Universalis as vendas registradas nas últimas 24 horas, monta um ranking de compras e publica no canal Discord configurado. No último dia do mês, também tenta publicar o ranking mensal.
 
-O bot não recebe comandos de chat nem faz consultas de preço sob demanda. O Render hospeda um pequeno servidor HTTP que agenda a publicação para 12h no horário de São Paulo. O GitHub Actions faz uma chamada às 11h50 para acordar o serviço gratuito do Render antes da publicação.
+O bot não recebe comandos de chat nem faz consultas de preço sob demanda. O Render hospeda um pequeno servidor HTTP que agenda a publicação para 12h no horário de São Paulo. O GitHub Actions acorda o Render as 11h55 e acompanha a tentativa de publicacao.
 
 ## O que é publicado
 
@@ -22,21 +22,19 @@ As vendas representam os registros recebidos pelo Universalis, que depende de up
    - `RENDER_WAKE_TOKEN`: segredo aleatório usado para autorizar o GitHub Actions a acordar o servidor.
 4. Convide o bot ao servidor e dê ao cargo do bot acesso ao canal, com `View Channel`, `Send Messages` e `Embed Links`. A leitura do histórico (`Read Message History`) também é usada para evitar a duplicação do especial mensal.
 
-O endpoint `GET /health` é usado pelo Render para confirmar que o servidor está pronto. O `POST /wake` exige `Authorization: Bearer <RENDER_WAKE_TOKEN>` e prepara a publicação diária. O `POST /publish-now`, com o mesmo cabeçalho, solicita uma publicação imediata. Não compartilhe esse segredo.
+O endpoint GET `/health` e usado pelo Render. Os endpoints POST `/wake` e `/publish-now`, alem do GET `/status`, exigem `Authorization: Bearer <RENDER_WAKE_TOKEN>`.
 
 ## Agendamento no GitHub Actions
 
-O workflow [`wake-render.yml`](.github/workflows/wake-render.yml) faz chamadas às **11h45 e 11h55 de São Paulo** (`14:45 e 14:55 UTC`) para reduzir o risco de o serviço gratuito do Render dormir antes do meio-dia. O serviço agenda o envio para **12h00 de São Paulo**. As execuções agendadas do GitHub podem atrasar e só rodam a partir da branch padrão.
+O workflow [`wake-render.yml`](.github/workflows/wake-render.yml) acorda o Render às **11h55 de São Paulo** (`14:55 UTC`). O serviço agenda a publicação para **12h00**. Enquanto a publicação consulta o Universalis, o GitHub Actions verifica `/status` a cada cinco minutos para manter o Render gratuito ativo.
 
-Para publicar manualmente, abra **Actions → Publicar mercado no Discord → Run workflow** e selecione `publicar_agora`. A opção `acordar` apenas prepara o serviço para a publicação do meio-dia.
+As consultas ao Universalis repetem falhas temporarias por ate **uma hora no total**. Ao atingir esse prazo, a solicitacao e cancelada e o workflow termina com falha.
 
-No repositório GitHub, abra **Settings → Secrets and variables → Actions** e configure:
+Para publicar manualmente, abra **Actions → Publicar mercado no Discord → Run workflow** e selecione `publicar_agora`. A opção `acordar` prepara o serviço para o meio-dia; se usada depois do meio-dia, pode iniciar a publicação imediatamente.
 
-- Em **Variables**, `RENDER_SERVICE_URL` com a URL base do serviço Render, por exemplo `https://ado-of-light.onrender.com` (sem `/wake`).
-- Em **Secrets**, `RENDER_WAKE_TOKEN` com o mesmo segredo configurado no Render.
+No repositório GitHub, abra **Settings → Secrets and variables → Actions** e configure `RENDER_SERVICE_URL` em **Variables** e `RENDER_WAKE_TOKEN` em **Secrets**. Use a URL base do Render, sem `/wake`, e o mesmo token configurado no Render.
 
-O agendamento do GitHub Actions pode atrasar alguns minutos sob carga. Ele roda a partir da branch padrão do repositório. O Render gratuito normalmente suspende o serviço após 15 minutos sem tráfego e demora cerca de um minuto para acordar; a chamada das 11h50 dá margem para iniciar antes do horário de publicação. Instâncias gratuitas podem reiniciar e não oferecem garantia de execução pontual.
-
+O Render gratuito suspende o serviço após 15 minutos sem tráfego de entrada. As verificações do workflow mantêm a instância ativa durante a tentativa, mas o plano gratuito ainda pode reiniciar o serviço e não garante execução pontual.
 ## Discord
 
 Como o bot apenas publica mensagens, ele não precisa de URL de interações nem de URL de redirecionamento OAuth2. Para adicioná-lo ao servidor, use o link de instalação com o escopo `bot` e conceda as permissões de canal acima. O escopo `applications.commands` só é necessário se o projeto voltar a oferecer comandos slash.

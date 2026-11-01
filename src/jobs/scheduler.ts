@@ -7,11 +7,27 @@ export class DailyPublisher {
   private timer: ReturnType<typeof setTimeout> | undefined;
   private lastRunDate: string | undefined;
   private runningDate: string | undefined;
+  private statusDate: string | undefined;
+  private publicationStatus:
+    | "waiting"
+    | "queued"
+    | "running"
+    | "succeeded"
+    | "failed" = "waiting";
 
   constructor(private readonly env: Environment) {}
 
   start(): void {
     this.scheduleNextNoon();
+  }
+
+  getStatus(): { status: string; scheduledFor: string } {
+    const now = new Date();
+    const day = getSaoPauloDateKey(now);
+    return {
+      status: this.statusDate === day ? this.publicationStatus : "waiting",
+      scheduledFor: getSaoPauloNoon(now).toISOString(),
+    };
   }
 
   wake(): {
@@ -31,6 +47,7 @@ export class DailyPublisher {
       if (this.runningDate === day)
         return { status: "publishing", scheduledFor: noon.toISOString() };
       if (this.timer) clearTimeout(this.timer);
+      this.setStatus(day, "queued");
       this.timer = setTimeout(() => void this.publishForDay(day), 0);
       return { status: "publishing", scheduledFor: noon.toISOString() };
     }
@@ -42,6 +59,7 @@ export class DailyPublisher {
     const day = getSaoPauloDateKey(new Date());
     if (this.runningDate === day) return { status: "already_publishing" };
     if (this.timer) clearTimeout(this.timer);
+    this.setStatus(day, "queued");
     this.timer = setTimeout(() => void this.publishManually(day), 0);
     return { status: "publishing" };
   }
@@ -64,12 +82,15 @@ export class DailyPublisher {
   private async publishForDay(day: string): Promise<void> {
     if (this.lastRunDate === day || this.runningDate === day) return;
     this.runningDate = day;
+    this.setStatus(day, "running");
 
     try {
       await runScheduledPublication(this.env, new Date());
       this.lastRunDate = day;
+      this.setStatus(day, "succeeded");
       console.info(`Publicação de ${day} concluída.`);
     } catch (error) {
+      this.setStatus(day, "failed");
       console.error(
         `Falha na publicação de ${day}:`,
         error instanceof Error ? error.message : error,
@@ -83,10 +104,13 @@ export class DailyPublisher {
   private async publishManually(day: string): Promise<void> {
     if (this.runningDate === day) return;
     this.runningDate = day;
+    this.setStatus(day, "running");
     try {
       await runScheduledPublication(this.env, new Date());
-      console.info(`PublicaÃ§Ã£o manual de ${day} concluÃ­da.`);
+      this.setStatus(day, "succeeded");
+      console.info(`Publicacao manual de ${day} concluida.`);
     } catch (error) {
+      this.setStatus(day, "failed");
       console.error(
         `Falha na publicaÃ§Ã£o manual de ${day}:`,
         error instanceof Error ? error.message : error,
@@ -95,6 +119,14 @@ export class DailyPublisher {
       this.runningDate = undefined;
       this.scheduleNextNoon();
     }
+  }
+
+  private setStatus(
+    day: string,
+    status: "waiting" | "queued" | "running" | "succeeded" | "failed",
+  ): void {
+    this.statusDate = day;
+    this.publicationStatus = status;
   }
 }
 

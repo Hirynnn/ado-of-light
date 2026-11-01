@@ -26,7 +26,10 @@ export async function runScheduledPublication(
     throw new Error(
       "Configure DISCORD_BOT_TOKEN e DISCORD_CHANNEL_ID no ambiente.",
     );
-  const market = new UniversalisClient(env.UNIVERSALIS_BASE_URL);
+  const market = new UniversalisClient(
+    env.UNIVERSALIS_BASE_URL,
+    Date.now() + 60 * 60 * 1000,
+  );
   const xivapi = new XIVApiClient(env.XIVAPI_BASE_URL);
   const ids = await market.getMarketableItemIds();
   if (!ids.length)
@@ -69,7 +72,12 @@ export async function runScheduledPublication(
             }),
           ),
         ] as const;
-      } catch {
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          error.message.startsWith("Tempo limite de uma hora consultando")
+        )
+          throw error;
         return [
           world,
           new Map<number, number | null>(

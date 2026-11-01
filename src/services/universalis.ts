@@ -22,13 +22,19 @@ const DEFAULT_UNIVERSALIS = "https://universalis.app/api/v2";
 
 export class UniversalisClient {
   readonly baseUrl: string;
+  private readonly retryUntilMs: number | undefined;
 
-  constructor(baseUrl?: string) {
+  constructor(baseUrl?: string, retryUntilMs?: number) {
     this.baseUrl = normalizeBaseUrl(baseUrl, DEFAULT_UNIVERSALIS);
+    this.retryUntilMs = retryUntilMs;
+  }
+
+  private request<T>(url: string): Promise<T> {
+    return fetchJson<T>(url, 20_000, 2, this.retryUntilMs);
   }
 
   async getMarketableItemIds(): Promise<number[]> {
-    const data = await fetchJson<unknown>(`${this.baseUrl}/marketable`);
+    const data = await this.request<unknown>(`${this.baseUrl}/marketable`);
     const values = Array.isArray(data)
       ? data
       : isRecord(data) && Array.isArray(data.items)
@@ -59,7 +65,7 @@ export class UniversalisClient {
         entriesToReturn: String(entriesToReturn),
       });
       const url = `${this.baseUrl}/history/${PRIMAL_DC}/${ids.join(",")}?${query}`;
-      return fetchJson<HistoryMultiResponse | HistoryItemResponse[]>(url);
+      return this.request<HistoryMultiResponse | HistoryItemResponse[]>(url);
     });
     const byItem = new Map<number, SaleEntry[]>();
     responses.forEach((response, batchIndex) => {
@@ -106,7 +112,7 @@ export class UniversalisClient {
       entries: "20",
       entriesWithin: String(7 * DAY_SECONDS),
     });
-    const response = await fetchJson<
+    const response = await this.request<
       CurrentMultiResponse | CurrentItemResponse
     >(`${this.baseUrl}/${PRIMAL_DC}/${itemId}?${query}`);
     if (isRecord(response) && isRecord(response.items))
@@ -122,7 +128,7 @@ export class UniversalisClient {
     const responses = await mapWithConcurrency(batches, 4, async (ids) => {
       const query = new URLSearchParams({ listings: "1" });
       const url = `${this.baseUrl}/${encodeURIComponent(world)}/${ids.join(",")}?${query}`;
-      return fetchJson<
+      return this.request<
         CurrentMultiResponse | CurrentItemResponse | CurrentItemResponse[]
       >(url);
     });

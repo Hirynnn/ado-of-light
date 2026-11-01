@@ -26,6 +26,19 @@ const server = createServer((request, response) => {
     return;
   }
 
+  if (request.method === "GET" && request.url === "/status") {
+    const authorization = request.headers.authorization ?? "";
+    if (!hasValidToken(authorization, env.RENDER_WAKE_TOKEN!)) {
+      response.writeHead(401, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ error: "unauthorized" }));
+      return;
+    }
+
+    response.writeHead(200, { "Content-Type": "application/json" });
+    response.end(JSON.stringify(publisher.getStatus()));
+    return;
+  }
+
   if (request.method === "POST" && request.url === "/wake") {
     const authorization = request.headers.authorization ?? "";
     if (!hasValidToken(authorization, env.RENDER_WAKE_TOKEN!)) {
