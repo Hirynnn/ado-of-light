@@ -187,20 +187,50 @@ async function discordRequest<T = unknown>(
   path: string,
   init: RequestInit = {},
 ): Promise<T> {
-  const response = await fetch(`${DISCORD_API}${path}`, {
-    ...init,
-    headers: {
-      Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
-      "Content-Type": "application/json",
-      ...init.headers,
-    },
-  });
-  if (!response.ok) {
-    const detail = (await response.text()).slice(0, 300);
-    throw new Error(`Discord HTTP ${response.status}: ${detail}`);
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const response = await fetch(`${DISCORD_API}${path}`, {
+      ...init,
+      headers: {
+        Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+        "Content-Type": "application/json",
+        ...init.headers,
+      },
+    });
+    if (response.status === 429 && attempt < 3) {
+      const retryAfterHeader = Number(response.headers.get("retry-after"));
+      const body = await response.text();
+      let retryAfterBody = Number.NaN;
+      try {
+        const parsed = JSON.parse(body) as { retry_after?: number };
+        retryAfterBody = Number(parsed.retry_after);
+      } catch {
+        // Some edge responses are HTML and omit Discord's JSON retry_after.
+      }
+      const retryAfterSeconds =
+        Number.isFinite(retryAfterHeader) && retryAfterHeader > 0
+          ? retryAfterHeader
+          : Number.isFinite(retryAfterBody) && retryAfterBody > 0
+            ? retryAfterBody
+            : (attempt + 1) * 2;
+      const waitMs = Math.min(retryAfterSeconds * 1000, 30_000);
+      console.warn(
+        `Discord HTTP 429 (${response.headers.get("content-type") ?? "content-type desconhecido"}); nova tentativa em ${waitMs}ms.`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
+      continue;
+    }
+    if (!response.ok) {
+      const contentType = response.headers.get("content-type") ?? "desconhecido";
+      const retryAfter = response.headers.get("retry-after");
+      const detail = (await response.text()).slice(0, 160).replace(/\s+/g, " ");
+      throw new Error(
+        `Discord HTTP ${response.status} (content-type: ${contentType}${retryAfter ? `, retry-after: ${retryAfter}` : ""}): ${detail}`,
+      );
+    }
+    if (response.status === 204) return undefined as T;
+    return (await response.json()) as T;
   }
-  if (response.status === 204) return undefined as T;
-  return (await response.json()) as T;
+  throw new Error("Discord continuou respondendo HTTP 429 após 4 tentativas.");
 }
 
 function getSaoPauloDate(date: Date): {

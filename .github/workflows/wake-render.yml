@@ -1,10 +1,20 @@
-name: Acordar Render para publicação do meio-dia
+name: Publicar mercado no Discord
 
 on:
   schedule:
-    # 11:50 em São Paulo (UTC-03:00). O processo do Render publica ao meio-dia.
-    - cron: "50 14 * * *"
+    # Duas chamadas diárias: redundância para acordar Render perto do meio-dia.
+    - cron: "45 14 * * *"
+    - cron: "55 14 * * *"
   workflow_dispatch:
+    inputs:
+      acao:
+        description: "Escolha se quer publicar agora ou apenas acordar para o meio-dia"
+        required: true
+        type: choice
+        default: publicar_agora
+        options:
+          - publicar_agora
+          - acordar
 
 concurrency:
   group: ado-of-light-render-wake
@@ -26,14 +36,18 @@ jobs:
             exit 1
           fi
 
-          url="${RENDER_SERVICE_URL%/}/wake"
+          endpoint="/wake"
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.acao }}" == "publicar_agora" ]]; then
+            endpoint="/publish-now"
+          fi
+          url="${RENDER_SERVICE_URL%/}${endpoint}"
           for attempt in $(seq 1 10); do
             status=$(curl --silent --show-error --output /tmp/render-wake-response \
               --write-out "%{http_code}" --connect-timeout 15 --max-time 75 \
               --request POST --header "Authorization: Bearer ${RENDER_WAKE_TOKEN}" \
               "$url" || true)
             if [[ "$status" == "202" ]]; then
-              echo "Render acordado; publicação agendada para 12h de São Paulo."
+              echo "Render aceitou a solicitação: ${endpoint}."
               cat /tmp/render-wake-response
               exit 0
             fi

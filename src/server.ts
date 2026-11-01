@@ -40,6 +40,20 @@ const server = createServer((request, response) => {
     return;
   }
 
+  if (request.method === "POST" && request.url === "/publish-now") {
+    const authorization = request.headers.authorization ?? "";
+    if (!hasValidToken(authorization, env.RENDER_WAKE_TOKEN!)) {
+      response.writeHead(401, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ error: "unauthorized" }));
+      return;
+    }
+
+    const result = publisher.publishNow();
+    response.writeHead(202, { "Content-Type": "application/json" });
+    response.end(JSON.stringify(result));
+    return;
+  }
+
   response.writeHead(404, { "Content-Type": "application/json" });
   response.end(JSON.stringify({ error: "not_found" }));
 });

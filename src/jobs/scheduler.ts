@@ -6,6 +6,7 @@ const SAO_PAULO_OFFSET_HOURS = 3;
 export class DailyPublisher {
   private timer: ReturnType<typeof setTimeout> | undefined;
   private lastRunDate: string | undefined;
+  private runningDate: string | undefined;
 
   constructor(private readonly env: Environment) {}
 
@@ -27,12 +28,22 @@ export class DailyPublisher {
           status: "already_published",
           scheduledFor: noon.toISOString(),
         };
+      if (this.runningDate === day)
+        return { status: "publishing", scheduledFor: noon.toISOString() };
       if (this.timer) clearTimeout(this.timer);
       this.timer = setTimeout(() => void this.publishForDay(day), 0);
       return { status: "publishing", scheduledFor: noon.toISOString() };
     }
 
     return { status: "waiting", scheduledFor: noon.toISOString() };
+  }
+
+  publishNow(): { status: "publishing" | "already_publishing" } {
+    const day = getSaoPauloDateKey(new Date());
+    if (this.runningDate === day) return { status: "already_publishing" };
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = setTimeout(() => void this.publishManually(day), 0);
+    return { status: "publishing" };
   }
 
   private scheduleNextNoon(): void {
@@ -51,11 +62,12 @@ export class DailyPublisher {
   }
 
   private async publishForDay(day: string): Promise<void> {
-    if (this.lastRunDate === day) return;
-    this.lastRunDate = day;
+    if (this.lastRunDate === day || this.runningDate === day) return;
+    this.runningDate = day;
 
     try {
       await runScheduledPublication(this.env, new Date());
+      this.lastRunDate = day;
       console.info(`Publicação de ${day} concluída.`);
     } catch (error) {
       console.error(
@@ -63,6 +75,24 @@ export class DailyPublisher {
         error instanceof Error ? error.message : error,
       );
     } finally {
+      this.runningDate = undefined;
+      this.scheduleNextNoon();
+    }
+  }
+
+  private async publishManually(day: string): Promise<void> {
+    if (this.runningDate === day) return;
+    this.runningDate = day;
+    try {
+      await runScheduledPublication(this.env, new Date());
+      console.info(`PublicaÃ§Ã£o manual de ${day} concluÃ­da.`);
+    } catch (error) {
+      console.error(
+        `Falha na publicaÃ§Ã£o manual de ${day}:`,
+        error instanceof Error ? error.message : error,
+      );
+    } finally {
+      this.runningDate = undefined;
       this.scheduleNextNoon();
     }
   }

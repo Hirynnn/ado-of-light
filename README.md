@@ -22,11 +22,13 @@ As vendas representam os registros recebidos pelo Universalis, que depende de up
    - `RENDER_WAKE_TOKEN`: segredo aleatório usado para autorizar o GitHub Actions a acordar o servidor.
 4. Convide o bot ao servidor e dê ao cargo do bot acesso ao canal, com `View Channel`, `Send Messages` e `Embed Links`. A leitura do histórico (`Read Message History`) também é usada para evitar a duplicação do especial mensal.
 
-O endpoint `GET /health` é usado pelo Render para confirmar que o servidor está pronto. O `POST /wake` exige `Authorization: Bearer <RENDER_WAKE_TOKEN>`; não compartilhe esse segredo.
+O endpoint `GET /health` é usado pelo Render para confirmar que o servidor está pronto. O `POST /wake` exige `Authorization: Bearer <RENDER_WAKE_TOKEN>` e prepara a publicação diária. O `POST /publish-now`, com o mesmo cabeçalho, solicita uma publicação imediata. Não compartilhe esse segredo.
 
 ## Agendamento no GitHub Actions
 
-O workflow [`wake-render.yml`](.github/workflows/wake-render.yml) roda às **11h50 de São Paulo** (`14:50 UTC`) e envia a chamada autenticada ao Render. O serviço agenda o envio para **12h00 de São Paulo**. Se o workflow chegar depois do meio-dia, o endpoint pede uma publicação imediata para não esperar até o dia seguinte.
+O workflow [`wake-render.yml`](.github/workflows/wake-render.yml) faz chamadas às **11h45 e 11h55 de São Paulo** (`14:45 e 14:55 UTC`) para reduzir o risco de o serviço gratuito do Render dormir antes do meio-dia. O serviço agenda o envio para **12h00 de São Paulo**. As execuções agendadas do GitHub podem atrasar e só rodam a partir da branch padrão.
+
+Para publicar manualmente, abra **Actions → Publicar mercado no Discord → Run workflow** e selecione `publicar_agora`. A opção `acordar` apenas prepara o serviço para a publicação do meio-dia.
 
 No repositório GitHub, abra **Settings → Secrets and variables → Actions** e configure:
 
