@@ -22,13 +22,14 @@ export async function runScheduledPublication(
   now = new Date(),
   publish = true,
 ): Promise<void> {
+  const deadlineMs = Date.now() + 60 * 60 * 1000;
   if (publish && (!env.DISCORD_BOT_TOKEN || !env.DISCORD_CHANNEL_ID))
     throw new Error(
       "Configure DISCORD_BOT_TOKEN e DISCORD_CHANNEL_ID no ambiente.",
     );
   const market = new UniversalisClient(
     env.UNIVERSALIS_BASE_URL,
-    Date.now() + 60 * 60 * 1000,
+    deadlineMs,
   );
   const xivapi = new XIVApiClient(env.XIVAPI_BASE_URL);
   const ids = await market.getMarketableItemIds();
@@ -93,7 +94,7 @@ export async function runScheduledPublication(
     new Map(worldPriceRows),
     dailyWindow,
   );
-  if (publish) await postLongMessage(env, dailyMessage);
+  if (publish) await postLongMessage(env, dailyMessage, deadlineMs);
   else console.info(`[dry-run diário]\n${dailyMessage}`);
 
   const localDate = getSaoPauloDate(now);
@@ -105,7 +106,7 @@ export async function runScheduledPublication(
     return;
 
   const marker = `${MONTHLY_MARKER}:${localDate.year}-${String(localDate.month).padStart(2, "0")}`;
-  if (publish && (await hasRecentMarker(env, marker))) {
+  if (publish && (await hasRecentMarker(env, marker, deadlineMs))) {
     console.info(
       `Publicação mensal ${marker} já existe no canal; ignorando a duplicata.`,
     );
@@ -121,7 +122,7 @@ export async function runScheduledPublication(
   );
   if (wasTruncated) {
     const warning = `**Especial mensal não publicado:** pelo menos um item atingiu o limite de ${(99_999).toLocaleString("pt-BR")} registros do endpoint. O ranking poderia estar incompleto. Referência: ||${marker}:limit||`;
-    if (publish) await postLongMessage(env, warning);
+    if (publish) await postLongMessage(env, warning, deadlineMs);
     else console.info(`[dry-run mensal: incompleto]\n${warning}`);
     return;
   }
@@ -136,16 +137,17 @@ export async function runScheduledPublication(
     monthlyRanks.slice(0, 10).map((row) => row.itemId),
   );
   const monthlyMessage = `${formatMonthlyRanking(localDate.year, localDate.month, monthlyRanks, monthlyNames)}\n||${marker}||`;
-  if (publish) await postLongMessage(env, monthlyMessage);
+  if (publish) await postLongMessage(env, monthlyMessage, deadlineMs);
   else console.info(`[dry-run mensal]\n${monthlyMessage}`);
 }
 
 export async function postLongMessage(
   env: Environment,
   content: string,
+  deadlineMs = Date.now() + 60 * 60 * 1000,
 ): Promise<void> {
   const pieces = splitMessage(content, 1900);
-  for (const piece of pieces) await postMessage(env, piece);
+  for (const piece of pieces) await postMessage(env, piece, deadlineMs);
 }
 
 export function splitMessage(content: string, maxLength: number): string[] {
@@ -163,16 +165,21 @@ export function splitMessage(content: string, maxLength: number): string[] {
   return result;
 }
 
-async function postMessage(env: Environment, content: string): Promise<void> {
+async function postMessage(
+  env: Environment,
+  content: string,
+  deadlineMs: number,
+): Promise<void> {
   await discordRequest(env, `/channels/${env.DISCORD_CHANNEL_ID}/messages`, {
     method: "POST",
     body: JSON.stringify({ content, allowed_mentions: { parse: [] } }),
-  });
+  }, deadlineMs);
 }
 
 async function hasRecentMarker(
   env: Environment,
   marker: string,
+  deadlineMs: number,
 ): Promise<boolean> {
   let before: string | undefined;
   for (let page = 0; page < 5; page += 1) {
@@ -180,7 +187,12 @@ async function hasRecentMarker(
     if (before) query.set("before", before);
     const messages = await discordRequest<
       Array<{ id: string; content?: string }>
-    >(env, `/channels/${env.DISCORD_CHANNEL_ID}/messages?${query}`);
+    >(
+      env,
+      `/channels/${env.DISCORD_CHANNEL_ID}/messages?${query}`,
+      {},
+      deadlineMs,
+    );
     if (messages.some((message) => message.content?.includes(marker)))
       return true;
     if (messages.length < 100) return false;
@@ -194,17 +206,36 @@ async function discordRequest<T = unknown>(
   env: Environment,
   path: string,
   init: RequestInit = {},
+  deadlineMs = Date.now() + 60 * 60 * 1000,
 ): Promise<T> {
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    const response = await fetch(`${DISCORD_API}${path}`, {
-      ...init,
-      headers: {
-        Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
-        "Content-Type": "application/json",
-        ...init.headers,
-      },
-    });
-    if (response.status === 429 && attempt < 3) {
+  let attempt = 0;
+  while (Date.now() < deadlineMs) {
+    const controller = new AbortController();
+    const timer = setTimeout(
+      () => controller.abort(),
+      Math.min(20_000, deadlineMs - Date.now()),
+    );
+    let response: Response;
+    try {
+      response = await fetch(`${DISCORD_API}${path}`, {
+        ...init,
+        signal: controller.signal,
+        headers: {
+          Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`,
+          "Content-Type": "application/json",
+          ...init.headers,
+        },
+      });
+    } catch (error) {
+      if (Date.now() >= deadlineMs)
+        throw new Error(
+          "Tempo limite de uma hora aguardando resposta do Discord.",
+        );
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+    if (response.status === 429) {
       const retryAfterHeader = Number(response.headers.get("retry-after"));
       const body = await response.text();
       let retryAfterBody = Number.NaN;
@@ -219,12 +250,18 @@ async function discordRequest<T = unknown>(
           ? retryAfterHeader
           : Number.isFinite(retryAfterBody) && retryAfterBody > 0
             ? retryAfterBody
-            : (attempt + 1) * 2;
-      const waitMs = Math.min(retryAfterSeconds * 1000, 30_000);
+            : Math.min(2 ** Math.min(attempt, 6), 60);
+      const waitMs = retryAfterSeconds * 1000;
+      if (waitMs >= deadlineMs - Date.now()) {
+        throw new Error(
+          `Discord HTTP 429; Retry-After de ${retryAfterSeconds}s excede o limite de uma hora. Publicação cancelada.`,
+        );
+      }
       console.warn(
         `Discord HTTP 429 (${response.headers.get("content-type") ?? "content-type desconhecido"}); nova tentativa em ${waitMs}ms.`,
       );
       await new Promise((resolve) => setTimeout(resolve, waitMs));
+      attempt += 1;
       continue;
     }
     if (!response.ok) {
@@ -238,7 +275,7 @@ async function discordRequest<T = unknown>(
     if (response.status === 204) return undefined as T;
     return (await response.json()) as T;
   }
-  throw new Error("Discord continuou respondendo HTTP 429 após 4 tentativas.");
+  throw new Error("Tempo limite de uma hora aguardando resposta do Discord.");
 }
 
 function getSaoPauloDate(date: Date): {
